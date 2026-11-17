@@ -119,7 +119,7 @@ export default function Home() {
       setCameraOn(true);
       setMicOn(true);
 
-      const socket = io("http://localhost:3001");
+      const socket = io("https://talk-anyone-5mlu.onrender.com");
       socketRef.current = socket;
 
       socket.on("connect", () => {
@@ -486,7 +486,6 @@ export default function Home() {
             Stop
           </button>
         </div>
-
         <div className="mb-6 rounded-xl border border-slate-700 bg-slate-900 p-4">
           <label className="flex cursor-pointer items-start gap-3">
             <input
