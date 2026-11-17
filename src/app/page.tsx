@@ -26,6 +26,10 @@ export default function Home() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [messageInput, setMessageInput] = useState("");
 
+  const [reportOpen, setReportOpen] = useState(false);
+  const [reportReason, setReportReason] = useState("harassment");
+  const [reportPending, setReportPending] = useState(false);
+
   function closePeer() {
     if (peerRef.current) {
       peerRef.current.ontrack = null;
@@ -119,7 +123,11 @@ export default function Home() {
       setCameraOn(true);
       setMicOn(true);
 
-      const socket = io("https://talk-anyone-5mlu.onrender.com");
+      const socket = io(
+        process.env.NODE_ENV === "development"
+          ? "http://localhost:3001"
+          : "https://talk-anyone-5mlu.onrender.com"
+      );
       socketRef.current = socket;
 
       socket.on("connect", () => {
@@ -139,6 +147,7 @@ export default function Home() {
         closePeer();
         setMessages([]);
         setPartnerConnected(true);
+        setReportOpen(false);
         setIsSearching(false);
         setStatus("You are connected! Say hello.");
 
@@ -327,6 +336,26 @@ export default function Home() {
     setMicOn(newState);
   }
 
+  function submitReport() {
+    const socket = socketRef.current;
+    if (!socket?.connected || !partnerConnected || reportPending) return;
+
+    setReportPending(true);
+    socket.timeout(10000).emit(
+      "report-user",
+      { reason: reportReason },
+      (error: Error | null, reply?: { ok: boolean; message: string }) => {
+        setReportPending(false);
+        if (error || !reply?.ok) {
+          setStatus(reply?.message || "Report could not be sent. Try again.");
+          return;
+        }
+        setReportOpen(false);
+        setStatus("Report received. Thank you for helping keep TALK ANYONE safe.");
+      }
+    );
+  }
+
   function blockUser() {
     if (!partnerConnected) return;
 
@@ -478,6 +507,13 @@ export default function Home() {
           >
             🚫 Block
           </button>
+          <button
+            onClick={() => setReportOpen(true)}
+            disabled={!partnerConnected}
+            className="rounded-xl bg-amber-600 px-6 py-3 font-bold transition hover:bg-amber-500 disabled:opacity-40"
+          >
+            🚩 Report
+          </button>
 
           <button
             onClick={stopChat}
@@ -486,6 +522,44 @@ export default function Home() {
             Stop
           </button>
         </div>
+        {reportOpen && partnerConnected && (
+          <div className="mb-6 rounded-xl border border-amber-600 bg-slate-900 p-5">
+            <h3 className="mb-3 text-lg font-bold">🚩 Report this person</h3>
+            <p className="mb-3 text-sm text-slate-400">
+              Choose a reason. Reporting does not automatically block someone.
+            </p>
+            <label htmlFor="report-reason" className="mb-2 block text-sm">Reason</label>
+            <select
+              id="report-reason"
+              value={reportReason}
+              onChange={(event) => setReportReason(event.target.value)}
+              className="w-full rounded-lg border border-slate-600 bg-slate-950 p-3"
+            >
+              <option value="harassment">Harassment or bullying</option>
+              <option value="inappropriate-content">Inappropriate content</option>
+              <option value="spam">Spam or advertising</option>
+              <option value="hate-speech">Hate speech or threats</option>
+              <option value="other">Other</option>
+            </select>
+            <div className="mt-4 flex flex-wrap gap-3">
+              <button
+                onClick={submitReport}
+                disabled={reportPending}
+                className="rounded-lg bg-amber-600 px-5 py-3 font-bold disabled:opacity-40"
+              >
+                {reportPending ? "Sending..." : "Submit Report"}
+              </button>
+              <button
+                onClick={() => setReportOpen(false)}
+                disabled={reportPending}
+                className="rounded-lg bg-slate-700 px-5 py-3 font-bold disabled:opacity-40"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+
         <div className="mb-6 rounded-xl border border-slate-700 bg-slate-900 p-4">
           <label className="flex cursor-pointer items-start gap-3">
             <input
