@@ -2,27 +2,79 @@
 const { createServer } = require("http");
 const { Server } = require("socket.io");
 
-const httpServer = createServer();
+// Works on your Mac and on Render
+const PORT = Number(process.env.PORT) || 3001;
 
+// Allowed frontend websites
+const allowedOrigins = [
+  "http://localhost:3000",
+  "http://127.0.0.1:3000",
+  "https://talk-anyone.vercel.app",
+];
+
+if (process.env.FRONTEND_URL) {
+  allowedOrigins.push(
+    process.env.FRONTEND_URL.replace(/\/$/, "")
+  );
+}
+
+// Health check for online hosting
+const httpServer = createServer((req, res) => {
+  if (req.url === "/" || req.url === "/health") {
+    res.writeHead(200, {
+      "Content-Type": "application/json",
+    });
+
+    res.end(
+      JSON.stringify({
+        status: "ok",
+        service: "TALK ANYONE connection server",
+      })
+    );
+    return;
+  }
+
+  res.writeHead(404);
+  res.end("Not found");
+});
+
+// Socket.IO
 const io = new Server(httpServer, {
   cors: {
-    origin: "http://localhost:3000",
+    origin: allowedOrigins,
     methods: ["GET", "POST"],
   },
 });
 
+// Matching and blocking
 const waitingUsers = [];
 const partners = new Map();
 const blockedUsers = new Map();
 
 function removeFromWaiting(id) {
-  const index = waitingUsers.indexOf(id);
-  if (index !== -1) waitingUsers.splice(index, 1);
+  for (let i = waitingUsers.length - 1; i >= 0; i--) {
+    if (waitingUsers[i] === id) {
+      waitingUsers.splice(i, 1);
+    }
+  }
+}
+
+function cleanWaitingQueue() {
+  for (let i = waitingUsers.length - 1; i >= 0; i--) {
+    const id = waitingUsers[i];
+
+    if (!io.sockets.sockets.has(id) || partners.has(id)) {
+      waitingUsers.splice(i, 1);
+    }
+  }
 }
 
 function hasBlocked(user1, user2) {
-  return blockedUsers.get(user1)?.has(user2) ||
-         blockedUsers.get(user2)?.has(user1);
+  return (
+    blockedUsers.get(user1)?.has(user2) ||
+    blockedUsers.get(user2)?.has(user1) ||
+    false
+  );
 }
 
 function blockUser(user1, user2) {
@@ -35,48 +87,58 @@ function blockUser(user1, user2) {
 
 function disconnectPartner(id) {
   const partnerId = partners.get(id);
+
   if (!partnerId) return;
 
   partners.delete(id);
-  partners.delete(partnerId);
 
-  io.to(partnerId).emit("partner-left");
+  if (partners.get(partnerId) === id) {
+    partners.delete(partnerId);
+    io.to(partnerId).emit("partner-left");
+  }
 }
 
 function findPartner(socket) {
+  if (!socket.connected) return;
+
   if (partners.has(socket.id)) {
-    socket.emit("match-error", "You are already connected.");
+    socket.emit(
+      "match-error",
+      "You are already connected."
+    );
     return;
   }
 
   removeFromWaiting(socket.id);
+  cleanWaitingQueue();
 
-  let partnerId;
-
-  while (waitingUsers.length > 0) {
-    const candidate = waitingUsers.shift();
-
-    if (
+  // Find an eligible waiting stranger.
+  // Keep blocked candidates in the queue for other users.
+  const index = waitingUsers.findIndex((candidate) => {
+    return (
       candidate !== socket.id &&
-      io.sockets.sockets.has(candidate) &&
       !hasBlocked(socket.id, candidate)
-    ) {
-      partnerId = candidate;
-      break;
-    }
-  }
+    );
+  });
 
-  if (!partnerId) {
+  if (index === -1) {
     waitingUsers.push(socket.id);
     socket.emit("waiting");
     return;
   }
 
+  const [partnerId] = waitingUsers.splice(index, 1);
+
   partners.set(socket.id, partnerId);
   partners.set(partnerId, socket.id);
 
-  io.to(partnerId).emit("partner-found", { initiator: true });
-  io.to(socket.id).emit("partner-found", { initiator: false });
+  io.to(partnerId).emit("partner-found", {
+    initiator: true,
+  });
+
+  socket.emit("partner-found", {
+    initiator: false,
+  });
 
   console.log("Two users matched!");
 }
@@ -84,6 +146,12 @@ function findPartner(socket) {
 io.on("connection", (socket) => {
   console.log("User connected:", socket.id);
 
+  // Find random stranger
+  socket.on("find-partner", () => {
+    findPartner(socket);
+  });
+
+  // Text chat
   socket.on("chat-message", (message) => {
     const partnerId = partners.get(socket.id);
 
@@ -97,22 +165,22 @@ io.on("connection", (socket) => {
     }
   });
 
-  socket.on("find-partner", () => {
-    findPartner(socket);
-  });
-
+  // Next stranger
   socket.on("next-partner", () => {
     disconnectPartner(socket.id);
     removeFromWaiting(socket.id);
     findPartner(socket);
   });
 
-  // BLOCK CURRENT STRANGER
+  // Block current stranger
   socket.on("block-user", () => {
     const partnerId = partners.get(socket.id);
 
     if (!partnerId) {
-      socket.emit("block-error", "No stranger to block.");
+      socket.emit(
+        "block-error",
+        "No stranger to block."
+      );
       return;
     }
 
@@ -121,34 +189,59 @@ io.on("connection", (socket) => {
     disconnectPartner(socket.id);
     removeFromWaiting(socket.id);
 
-    socket.emit("user-blocked", "User blocked successfully.");
+    socket.emit(
+      "user-blocked",
+      "User blocked successfully."
+    );
+
     io.to(partnerId).emit("blocked-by-partner");
 
     console.log("User blocked:", socket.id);
   });
 
+  // WebRTC video/audio signaling
   socket.on("webrtc-offer", (offer) => {
     const partnerId = partners.get(socket.id);
-    if (partnerId) io.to(partnerId).emit("webrtc-offer", offer);
+
+    if (partnerId) {
+      io.to(partnerId).emit("webrtc-offer", offer);
+    }
   });
 
   socket.on("webrtc-answer", (answer) => {
     const partnerId = partners.get(socket.id);
-    if (partnerId) io.to(partnerId).emit("webrtc-answer", answer);
+
+    if (partnerId) {
+      io.to(partnerId).emit("webrtc-answer", answer);
+    }
   });
 
   socket.on("ice-candidate", (candidate) => {
     const partnerId = partners.get(socket.id);
-    if (partnerId) io.to(partnerId).emit("ice-candidate", candidate);
+
+    if (partnerId) {
+      io.to(partnerId).emit("ice-candidate", candidate);
+    }
   });
 
+  // Disconnect cleanup
   socket.on("disconnect", () => {
     removeFromWaiting(socket.id);
     disconnectPartner(socket.id);
+
+    blockedUsers.delete(socket.id);
+
+    for (const blocked of blockedUsers.values()) {
+      blocked.delete(socket.id);
+    }
+
     console.log("User disconnected:", socket.id);
   });
 });
 
-httpServer.listen(3001, () => {
-  console.log("TALK ANYONE connection server running on port 3001");
+// Start the connection server
+httpServer.listen(PORT, "0.0.0.0", () => {
+  console.log(
+    `TALK ANYONE connection server running on port ${PORT}`
+  );
 });
