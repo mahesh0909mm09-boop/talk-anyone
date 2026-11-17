@@ -1,5 +1,6 @@
 const { createServer } = require("http");
 const { Server } = require("socket.io");
+const { createClient } = require("@supabase/supabase-js");
 
 const PORT = Number(process.env.PORT) || 3001;
 const allowedOrigins = [
@@ -29,14 +30,17 @@ const waitingUsers = [];
 const partners = new Map();
 const blockedUsers = new Map();
 
-// Temporary reports: retained only while this server process is running.
-const reports = [];
-const MAX_REPORTS = 500;
+// Supabase reporting
+const db = process.env.SUPABASE_URL && process.env.SUPABASE_SECRET_KEY
+  ? createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SECRET_KEY)
+  : null;
+const savingReports = new Set();
 const REPORT_REASONS = new Set([
   "harassment",
   "inappropriate-content",
   "spam",
   "hate-speech",
+  "hate-or-threats",
   "other",
 ]);
 const reportCooldowns = new Map();
@@ -138,7 +142,7 @@ io.on("connection", (socket) => {
 
   // Frontend sends: socket.emit("report-user", { reason: "spam" }, callback)
   // callback receives { ok: boolean, message: string }.
-  socket.on("report-user", (payload, acknowledge) => {
+  socket.on("report-user", async (payload, acknowledge) => {
     const reply = (ok, message) => {
       if (typeof acknowledge === "function") acknowledge({ ok, message });
     };
@@ -154,21 +158,35 @@ io.on("connection", (socket) => {
     }
     const now = Date.now();
     const previous = reportCooldowns.get(socket.id) || 0;
-    if (now - previous < REPORT_COOLDOWN_MS) {
+    if (savingReports.has(socket.id) || now - previous < REPORT_COOLDOWN_MS) {
       reply(false, "Please wait before sending another report.");
       return;
     }
-    reportCooldowns.set(socket.id, now);
-    const report = {
-      id: `${now}-${reports.length + 1}`,
-      reportedAt: new Date(now).toISOString(),
-      reporterSocketId: socket.id,
-      reportedSocketId: partnerId,
-      reason,
-    };
-    reports.push(report);
-    if (reports.length > MAX_REPORTS) reports.shift();
-    console.log("Report received:", JSON.stringify(report));
+    if (!db) {
+      reply(false, "Reporting is not configured.");
+      return;
+    }
+
+    savingReports.add(socket.id);
+
+    try {
+      const { error } = await db.from("reports").insert({
+        reporter_socket_id: socket.id,
+        reported_socket_id: partnerId,
+        reason,
+      });
+
+      if (error) throw error;
+
+      reportCooldowns.set(socket.id, Date.now());
+      console.log("Report saved to Supabase:", reason);
+    } catch (error) {
+      console.error("Report saving failed:", error.message);
+      reply(false, "Could not save report. Please try again.");
+      return;
+    } finally {
+      savingReports.delete(socket.id);
+    }
     reply(true, "Report received. Thank you.");
   });
 
