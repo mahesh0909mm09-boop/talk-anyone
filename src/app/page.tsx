@@ -152,6 +152,10 @@ export default function Home() {
       );
       socketRef.current = socket;
 
+      socket.on("chat-error", (message: string) => {
+        setStatus(message);
+      });
+
       socket.on("connect", () => {
         setStatus("Finding someone...");
         setIsSearching(true);

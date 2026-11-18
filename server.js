@@ -309,6 +309,7 @@ io.on("connection", (socket) => {
     void searchForPartner(socket);
   });
 
+  // TALK_ANYONE_SPAM_PROTECTION_V1
   socket.on("chat-message", (message) => {
     const partnerId = partners.get(socket.id);
 
@@ -318,9 +319,86 @@ io.on("connection", (socket) => {
 
     const text = message.trim().slice(0, 1000);
 
-    if (text) {
-      io.to(partnerId).emit("chat-message", text);
+    if (!text) return;
+
+    const now = Date.now();
+
+    if (!socket.data.chatSpam) {
+      socket.data.chatSpam = {
+        sentAt: [],
+        recentTexts: [],
+        blockedUntil: 0,
+        lastNoticeAt: 0,
+      };
     }
+
+    const state = socket.data.chatSpam;
+
+    function notify(message) {
+      if (now - state.lastNoticeAt >= 2000) {
+        socket.emit("chat-error", message);
+        state.lastNoticeAt = now;
+      }
+    }
+
+    if (now < state.blockedUntil) {
+      const remaining = Math.ceil(
+        (state.blockedUntil - now) / 1000
+      );
+
+      notify(
+        `Spam protection: wait ${remaining} seconds.`
+      );
+      return;
+    }
+
+    state.sentAt = state.sentAt.filter(
+      (time) => now - time < 60000
+    );
+
+    state.recentTexts = state.recentTexts.filter(
+      (item) => now - item.time < 30000
+    );
+
+    const messagesLast10Seconds = state.sentAt.filter(
+      (time) => now - time < 10000
+    ).length;
+
+    const normalizedText = text
+      .toLowerCase()
+      .replace(/\\s+/g, " ");
+
+    const previousDuplicates = state.recentTexts.filter(
+      (item) => item.text === normalizedText
+    ).length;
+
+    const tooFast = messagesLast10Seconds >= 6;
+    const tooMany = state.sentAt.length >= 20;
+    const repeated = previousDuplicates >= 2;
+
+    if (tooFast || tooMany || repeated) {
+      state.blockedUntil = now + 30000;
+
+      notify(
+        "Spam detected. Messaging paused for 30 seconds."
+      );
+
+      console.log(
+        "Spam cooldown activated for:",
+        socket.id
+      );
+
+      return;
+    }
+
+    state.sentAt.push(now);
+
+    state.recentTexts.push({
+      text: normalizedText,
+      time: now,
+    });
+
+    io.to(partnerId).emit("chat-message", text);
   });
 
   socket.on("next-partner", () => {
