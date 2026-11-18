@@ -310,16 +310,30 @@ io.on("connection", (socket) => {
   });
 
   // TALK_ANYONE_SPAM_PROTECTION_V1
-  socket.on("chat-message", (message) => {
+  socket.on("chat-message", (message, acknowledge) => {
+    // TALK_ANYONE_CHAT_ACK_V1
+    const reply = (ok, message) => {
+      if (typeof acknowledge === "function") {
+        acknowledge({ ok, message });
+      }
+    };
     const partnerId = partners.get(socket.id);
 
-    if (!partnerId || typeof message !== "string") {
+    if (
+      !partnerId ||
+      partners.get(partnerId) !== socket.id ||
+      typeof message !== "string"
+    ) {
+      reply(false, "No active chat connection.");
       return;
     }
 
     const text = message.trim().slice(0, 1000);
 
-    if (!text) return;
+    if (!text) {
+      reply(false, "Message is empty.");
+      return;
+    }
 
     const now = Date.now();
 
@@ -346,9 +360,11 @@ io.on("connection", (socket) => {
         (state.blockedUntil - now) / 1000
       );
 
-      notify(
-        `Spam protection: wait ${remaining} seconds.`
-      );
+      const warning =
+        `Spam protection: wait ${remaining} seconds.`;
+
+      notify(warning);
+      reply(false, warning);
       return;
     }
 
@@ -379,9 +395,11 @@ io.on("connection", (socket) => {
     if (tooFast || tooMany || repeated) {
       state.blockedUntil = now + 30000;
 
-      notify(
-        "Spam detected. Messaging paused for 30 seconds."
-      );
+      const warning =
+        "Spam detected. Messaging paused for 30 seconds.";
+
+      notify(warning);
+      reply(false, warning);
 
       console.log(
         "Spam cooldown activated for:",
@@ -399,6 +417,7 @@ io.on("connection", (socket) => {
     });
 
     io.to(partnerId).emit("chat-message", text);
+    reply(true, "Message accepted by server.");
   });
 
   socket.on("next-partner", () => {

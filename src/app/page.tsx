@@ -47,6 +47,9 @@ export default function Home() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [messageInput, setMessageInput] = useState("");
 
+  const chatSessionRef = useRef(0);
+  const messagePendingRef = useRef(false);
+
   const [reportOpen, setReportOpen] = useState(false);
   const [reportReason, setReportReason] = useState("harassment");
   const [reportPending, setReportPending] = useState(false);
@@ -171,6 +174,8 @@ export default function Home() {
 
       socket.on("partner-found", async ({ initiator }) => {
         closePeer();
+        chatSessionRef.current += 1;
+        messagePendingRef.current = false;
         setMessages([]);
         setPartnerConnected(true);
         setReportOpen(false);
@@ -247,6 +252,8 @@ export default function Home() {
       });
 
       socket.on("partner-left", () => {
+        chatSessionRef.current += 1;
+        messagePendingRef.current = false;
         closePeer();
         setPartnerConnected(false);
         setIsSearching(false);
@@ -283,17 +290,57 @@ export default function Home() {
 
   function sendMessage() {
     const text = messageInput.trim();
+    const socket = socketRef.current;
 
-    if (!text || !partnerConnected) return;
+    if (
+      !text ||
+      !partnerConnected ||
+      !socket?.connected ||
+      messagePendingRef.current
+    ) {
+      return;
+    }
 
-    socketRef.current?.emit("chat-message", text);
+    messagePendingRef.current = true;
+    const session = chatSessionRef.current;
 
-    setMessages((previous) => [
-      ...previous,
-      { text, mine: true },
-    ]);
+    socket.timeout(5000).emit(
+      "chat-message",
+      text,
+      (
+        error: Error | null,
+        response?: { ok: boolean; message?: string }
+      ) => {
+        if (chatSessionRef.current !== session) {
+          return;
+        }
 
-    setMessageInput("");
+        messagePendingRef.current = false;
+
+        if (error) {
+          setStatus(
+            "Message not confirmed. Check your connection."
+          );
+          return;
+        }
+
+        if (!response?.ok) {
+          setStatus(
+            response?.message || "Message was not sent."
+          );
+          return;
+        }
+
+        setMessages((previous) => [
+          ...previous,
+          { text, mine: true },
+        ]);
+
+        setMessageInput((current) =>
+          current.trim() === text ? "" : current
+        );
+      }
+    );
   }
 
   function nextPartner() {
@@ -303,6 +350,8 @@ export default function Home() {
     }
 
     closePeer();
+    chatSessionRef.current += 1;
+    messagePendingRef.current = false;
     setMessages([]);
     setPartnerConnected(false);
     setIsSearching(true);
@@ -331,6 +380,8 @@ export default function Home() {
     setIsSearching(false);
     setCameraOn(false);
     setMicOn(false);
+    chatSessionRef.current += 1;
+    messagePendingRef.current = false;
     setMessages([]);
     setMessageInput("");
     setStatus("Chat stopped. Press Start when you're ready.");
@@ -393,6 +444,8 @@ export default function Home() {
 
     closePeer();
     setPartnerConnected(false);
+    chatSessionRef.current += 1;
+    messagePendingRef.current = false;
     setMessages([]);
     setStatus("Blocking this user...");
 
