@@ -547,11 +547,11 @@ export default function Home() {
           </div>
         </div>
 
-        <div className="my-5 grid grid-cols-2 gap-3 sm:flex sm:flex-wrap sm:justify-center">
+        <div className="my-5 grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:justify-center sm:gap-3">
           <button
             onClick={toggleCamera}
             disabled={!localStreamRef.current}
-            className="rounded-xl bg-slate-700 px-5 py-3 font-semibold transition hover:bg-slate-600 disabled:opacity-40"
+            className="min-h-12 touch-manipulation rounded-xl bg-slate-700 px-5 py-3 font-semibold transition hover:bg-slate-600 disabled:opacity-40"
           >
             {cameraOn ? "📷 Camera On" : "📷 Camera Off"}
           </button>
@@ -559,7 +559,7 @@ export default function Home() {
           <button
             onClick={toggleMic}
             disabled={!localStreamRef.current}
-            className="rounded-xl bg-slate-700 px-5 py-3 font-semibold transition hover:bg-slate-600 disabled:opacity-40"
+            className="min-h-12 touch-manipulation rounded-xl bg-slate-700 px-5 py-3 font-semibold transition hover:bg-slate-600 disabled:opacity-40"
           >
             {micOn ? "🎤 Mic On" : "🔇 Mic Off"}
           </button>
@@ -567,7 +567,7 @@ export default function Home() {
           <button
             onClick={startChat}
             disabled={!!socketRef.current?.connected || isSearching || partnerConnected}
-            className="rounded-xl bg-green-600 px-7 py-3 font-bold transition hover:bg-green-500 disabled:opacity-40"
+            className="min-h-12 touch-manipulation rounded-xl bg-green-600 px-7 py-3 font-bold transition hover:bg-green-500 disabled:opacity-40"
           >
             Start Chat
           </button>
@@ -575,7 +575,7 @@ export default function Home() {
           <button
             onClick={nextPartner}
             disabled={!socketRef.current?.connected}
-            className="rounded-xl bg-cyan-600 px-7 py-3 font-bold transition hover:bg-cyan-500 disabled:opacity-40"
+            className="min-h-12 touch-manipulation rounded-xl bg-cyan-600 px-7 py-3 font-bold transition hover:bg-cyan-500 disabled:opacity-40"
           >
             Next ➜
           </button>
@@ -583,21 +583,21 @@ export default function Home() {
           <button
             onClick={blockUser}
             disabled={!partnerConnected}
-            className="rounded-xl bg-orange-600 px-6 py-3 font-bold transition hover:bg-orange-500 disabled:opacity-40"
+            className="min-h-12 touch-manipulation rounded-xl bg-orange-600 px-6 py-3 font-bold transition hover:bg-orange-500 disabled:opacity-40"
           >
             🚫 Block
           </button>
           <button
             onClick={() => setReportOpen(true)}
             disabled={!partnerConnected}
-            className="rounded-xl bg-amber-600 px-6 py-3 font-bold transition hover:bg-amber-500 disabled:opacity-40"
+            className="min-h-12 touch-manipulation rounded-xl bg-amber-600 px-6 py-3 font-bold transition hover:bg-amber-500 disabled:opacity-40"
           >
             🚩 Report
           </button>
 
           <button
             onClick={stopChat}
-            className="rounded-xl bg-red-600 px-7 py-3 font-bold transition hover:bg-red-500"
+            className="min-h-12 touch-manipulation rounded-xl bg-red-600 px-7 py-3 font-bold transition hover:bg-red-500"
           >
             Stop
           </button>
