@@ -431,6 +431,7 @@ export default function Home() {
                 muted
                 playsInline
                 className="h-full w-full object-cover"
+                style={{ transform: "scaleX(-1)" }}
               />
 
               {!cameraOn && (
