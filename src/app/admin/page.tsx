@@ -22,6 +22,7 @@ type Report = {
   reported_socket_id: string;
   reason: string;
   status: string;
+  review_note: string | null;
   created_at: string;
 };
 
@@ -50,6 +51,8 @@ export default function AdminPage() {
   const [updatingId, setUpdatingId] = useState<string | null>(
     null
   );
+
+  const [noteDrafts, setNoteDrafts] = useState<Record<string, string>>({});
 
   const signedInUserId = user?.id;
   const isAdmin = signedInUserId === ADMIN_ID;
@@ -103,7 +106,7 @@ export default function AdminPage() {
       const { data, error } = await supabase
         .from("reports")
         .select(
-          "id, reporter_socket_id, reported_socket_id, reason, status, created_at"
+          "id, reporter_socket_id, reported_socket_id, reason, status, review_note, created_at"
         )
         .order("created_at", { ascending: false })
         .limit(100);
@@ -111,6 +114,14 @@ export default function AdminPage() {
       if (error) throw error;
 
       setReports((data ?? []) as Report[]);
+      setNoteDrafts(
+        Object.fromEntries(
+          (data ?? []).map((report) => [
+            report.id,
+            report.review_note ?? "",
+          ])
+        )
+      );
     } catch (error) {
       setMessage(
         error instanceof Error
@@ -227,6 +238,49 @@ export default function AdminPage() {
         error instanceof Error
           ? error.message
           : "Could not update report."
+      );
+    } finally {
+      setUpdatingId(null);
+    }
+  }
+
+  async function saveReviewNote(reportId: string) {
+    if (!supabase || !isAdmin || updatingId) return;
+
+    const note = (noteDrafts[reportId] ?? "").trim();
+
+    setUpdatingId(reportId);
+    setMessage("");
+
+    try {
+      const { data, error } = await supabase
+        .from("reports")
+        .update({ review_note: note || null })
+        .eq("id", reportId)
+        .select("id, review_note")
+        .single();
+
+      if (error) throw error;
+
+      setReports((previous) =>
+        previous.map((report) =>
+          report.id === reportId
+            ? { ...report, review_note: data.review_note }
+            : report
+        )
+      );
+
+      setNoteDrafts((previous) => ({
+        ...previous,
+        [reportId]: data.review_note ?? "",
+      }));
+
+      setMessage("Review note saved to Supabase.");
+    } catch (error) {
+      setMessage(
+        error instanceof Error
+          ? error.message
+          : "Could not save review note."
       );
     } finally {
       setUpdatingId(null);
@@ -415,6 +469,7 @@ export default function AdminPage() {
                       <th className="p-3">Status</th>
                       <th className="p-3">Reported At</th>
                       <th className="p-3">Reported Socket</th>
+                      <th className="p-3">Review Note</th>
                       <th className="p-3">Action</th>
                     </tr>
                   </thead>
@@ -449,6 +504,38 @@ export default function AdminPage() {
 
                         <td className="p-3 font-mono text-xs">
                           {report.reported_socket_id}
+                        </td>
+
+                        <td className="p-3">
+                          <textarea
+                            aria-label="Review note"
+                            rows={2}
+                            maxLength={1000}
+                            value={noteDrafts[report.id] ?? ""}
+                            onChange={(event) =>
+                              setNoteDrafts((previous) => ({
+                                ...previous,
+                                [report.id]: event.target.value,
+                              }))
+                            }
+                            placeholder="Write a review note..."
+                            className="min-w-48 rounded-lg border border-slate-600 bg-slate-950 p-2 text-white"
+                          />
+                          <button
+                            onClick={() =>
+                              void saveReviewNote(report.id)
+                            }
+                            disabled={
+                              updatingId !== null ||
+                              (noteDrafts[report.id] ?? "").trim() ===
+                                (report.review_note ?? "")
+                            }
+                            className="mt-2 block rounded-lg bg-blue-600 px-3 py-2 font-semibold disabled:opacity-40"
+                          >
+                            {updatingId === report.id
+                              ? "Saving..."
+                              : "Save Note"}
+                          </button>
                         </td>
 
                         <td className="p-3">
