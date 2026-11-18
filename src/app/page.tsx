@@ -45,6 +45,10 @@ export default function Home() {
   const [isSearching, setIsSearching] = useState(false);
   const [status, setStatus] = useState("Ready to meet someone?");
   const [messages, setMessages] = useState<Message[]>([]);
+
+  const chatScrollRef = useRef<HTMLDivElement | null>(null);
+  const chatShouldScrollRef = useRef(true);
+
   const [messageInput, setMessageInput] = useState("");
 
   const chatSessionRef = useRef(0);
@@ -53,6 +57,15 @@ export default function Home() {
   const [reportOpen, setReportOpen] = useState(false);
   const [reportReason, setReportReason] = useState("harassment");
   const [reportPending, setReportPending] = useState(false);
+
+  // TALK_ANYONE_CHAT_AUTOSCROLL_V1
+  useEffect(() => {
+    const box = chatScrollRef.current;
+
+    if (box && chatShouldScrollRef.current) {
+      box.scrollTop = box.scrollHeight;
+    }
+  }, [messages]);
 
   function closePeer() {
     if (peerRef.current) {
@@ -658,7 +671,13 @@ export default function Home() {
         <div className="rounded-2xl border border-slate-700 bg-slate-900 p-3 sm:p-5">
           <h3 className="mb-4 text-xl font-bold">💬 Live Chat</h3>
 
-          <div className="mb-4 h-64 space-y-3 overflow-y-auto rounded-xl bg-slate-950 p-3 sm:h-72 sm:p-4">
+          <div
+            ref={chatScrollRef}
+            onScroll={(event) => {
+              const box = event.currentTarget;
+              chatShouldScrollRef.current =
+                box.scrollHeight - box.scrollTop - box.clientHeight < 100;
+            }} className="mb-4 h-64 space-y-3 overflow-y-auto rounded-xl bg-slate-950 p-3 sm:h-72 sm:p-4">
             {messages.length === 0 && (
               <p className="text-center text-sm text-slate-500">
                 Your messages will appear here.
