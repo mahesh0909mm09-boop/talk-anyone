@@ -466,20 +466,20 @@ export default function Home() {
 
   return (
     <main className="min-h-screen bg-slate-950 text-white">
-      <header className="border-b border-slate-800 px-6 py-5">
-        <div className="mx-auto flex max-w-6xl items-center justify-between">
-          <h1 className="text-3xl font-extrabold tracking-wide text-cyan-400">
+      <header className="border-b border-slate-800 px-3 py-4 sm:px-6 sm:py-5">
+        <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-2">
+          <h1 className="text-xl font-extrabold tracking-wide text-cyan-400 sm:text-3xl">
             TALK ANYONE
           </h1>
-          <span className="rounded-full bg-slate-800 px-4 py-2 text-sm text-cyan-300">
+          <span className="rounded-full bg-slate-800 px-3 py-2 text-xs text-cyan-300 sm:px-4 sm:text-sm">
             Random Video Chat
           </span>
         </div>
       </header>
 
-      <section className="mx-auto max-w-6xl px-4 py-8">
+      <section className="mx-auto max-w-6xl px-3 py-5 sm:px-4 sm:py-8">
         <div className="mb-6 text-center">
-          <h2 className="text-3xl font-bold">
+          <h2 className="text-2xl font-bold sm:text-3xl">
             Meet New People Worldwide
           </h2>
           <p className="mt-2 text-slate-400">
@@ -496,7 +496,7 @@ export default function Home() {
           )}
         </div>
 
-        <div className="grid gap-5 md:grid-cols-2">
+        <div className="grid gap-3 sm:gap-5 md:grid-cols-2">
           <div className="overflow-hidden rounded-2xl border border-slate-700 bg-slate-900">
             <div className="flex items-center justify-between px-4 py-3">
               <h3 className="font-semibold">Your Camera</h3>
@@ -547,7 +547,7 @@ export default function Home() {
           </div>
         </div>
 
-        <div className="my-6 flex flex-wrap justify-center gap-3">
+        <div className="my-5 grid grid-cols-2 gap-3 sm:flex sm:flex-wrap sm:justify-center">
           <button
             onClick={toggleCamera}
             disabled={!localStreamRef.current}
@@ -655,10 +655,10 @@ export default function Home() {
           </label>
         </div>
 
-        <div className="rounded-2xl border border-slate-700 bg-slate-900 p-5">
+        <div className="rounded-2xl border border-slate-700 bg-slate-900 p-3 sm:p-5">
           <h3 className="mb-4 text-xl font-bold">💬 Live Chat</h3>
 
-          <div className="mb-4 h-56 space-y-3 overflow-y-auto rounded-xl bg-slate-950 p-4">
+          <div className="mb-4 h-64 space-y-3 overflow-y-auto rounded-xl bg-slate-950 p-3 sm:h-72 sm:p-4">
             {messages.length === 0 && (
               <p className="text-center text-sm text-slate-500">
                 Your messages will appear here.
