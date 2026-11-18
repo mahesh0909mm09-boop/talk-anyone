@@ -496,8 +496,8 @@ export default function Home() {
           )}
         </div>
 
-        <div className="grid gap-3 sm:gap-5 md:grid-cols-2">
-          <div className="overflow-hidden rounded-2xl border border-slate-700 bg-slate-900">
+        <div className="relative grid grid-cols-1 gap-3 sm:gap-5 md:grid-cols-2">
+          <div className="absolute bottom-3 right-3 z-10 w-[38%] max-w-44 overflow-hidden rounded-2xl border-2 border-cyan-400 bg-slate-900 shadow-xl md:static md:w-auto md:max-w-none md:border-slate-700 md:shadow-none">
             <div className="flex items-center justify-between px-4 py-3">
               <h3 className="font-semibold">Your Camera</h3>
               <span className="text-sm text-green-400">You</span>
@@ -529,7 +529,7 @@ export default function Home() {
               </span>
             </div>
 
-            <div className="relative flex aspect-video items-center justify-center bg-black">
+            <div className="relative flex aspect-[3/4] items-center justify-center bg-black md:aspect-video">
               <video
                 ref={remoteVideoRef}
                 autoPlay
