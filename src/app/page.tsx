@@ -229,6 +229,7 @@ export default function Home() {
         messagePendingRef.current = false;
         chatShouldScrollRef.current = true;
         setUnreadMessages(0);
+        setTabUnreadMessages(0);
         setMessages([]);
         setPartnerConnected(true);
         setReportOpen(false);
@@ -312,7 +313,9 @@ export default function Home() {
         ]);
       });
 
+      // TALK_ANYONE_TAB_RESET_V1
       socket.on("partner-left", () => {
+        setTabUnreadMessages(0);
         chatShouldScrollRef.current = true;
         setUnreadMessages(0);
         chatSessionRef.current += 1;
@@ -417,6 +420,7 @@ export default function Home() {
     messagePendingRef.current = false;
     chatShouldScrollRef.current = true;
     setUnreadMessages(0);
+    setTabUnreadMessages(0);
     setMessages([]);
     setPartnerConnected(false);
     setIsSearching(true);
@@ -449,6 +453,7 @@ export default function Home() {
     messagePendingRef.current = false;
     chatShouldScrollRef.current = true;
     setUnreadMessages(0);
+    setTabUnreadMessages(0);
     setMessages([]);
     setMessageInput("");
     setStatus("Chat stopped. Press Start when you're ready.");
@@ -515,6 +520,7 @@ export default function Home() {
     messagePendingRef.current = false;
     chatShouldScrollRef.current = true;
     setUnreadMessages(0);
+    setTabUnreadMessages(0);
     setMessages([]);
     setStatus("Blocking this user...");
 
