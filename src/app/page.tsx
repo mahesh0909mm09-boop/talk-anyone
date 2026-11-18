@@ -46,6 +46,9 @@ export default function Home() {
   const [status, setStatus] = useState("Ready to meet someone?");
   const [messages, setMessages] = useState<Message[]>([]);
 
+  // TALK_ANYONE_UNREAD_INDICATOR_V1
+  const [unreadMessages, setUnreadMessages] = useState(0);
+
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
   const chatShouldScrollRef = useRef(true);
 
@@ -189,6 +192,8 @@ export default function Home() {
         closePeer();
         chatSessionRef.current += 1;
         messagePendingRef.current = false;
+        chatShouldScrollRef.current = true;
+        setUnreadMessages(0);
         setMessages([]);
         setPartnerConnected(true);
         setReportOpen(false);
@@ -258,6 +263,10 @@ export default function Home() {
       });
 
       socket.on("chat-message", (message: string) => {
+        if (!chatShouldScrollRef.current) {
+          setUnreadMessages((count) => count + 1);
+        }
+
         setMessages((previous) => [
           ...previous,
           { text: message, mine: false },
@@ -265,6 +274,8 @@ export default function Home() {
       });
 
       socket.on("partner-left", () => {
+        chatShouldScrollRef.current = true;
+        setUnreadMessages(0);
         chatSessionRef.current += 1;
         messagePendingRef.current = false;
         closePeer();
@@ -365,6 +376,8 @@ export default function Home() {
     closePeer();
     chatSessionRef.current += 1;
     messagePendingRef.current = false;
+    chatShouldScrollRef.current = true;
+    setUnreadMessages(0);
     setMessages([]);
     setPartnerConnected(false);
     setIsSearching(true);
@@ -395,6 +408,8 @@ export default function Home() {
     setMicOn(false);
     chatSessionRef.current += 1;
     messagePendingRef.current = false;
+    chatShouldScrollRef.current = true;
+    setUnreadMessages(0);
     setMessages([]);
     setMessageInput("");
     setStatus("Chat stopped. Press Start when you're ready.");
@@ -459,6 +474,8 @@ export default function Home() {
     setPartnerConnected(false);
     chatSessionRef.current += 1;
     messagePendingRef.current = false;
+    chatShouldScrollRef.current = true;
+    setUnreadMessages(0);
     setMessages([]);
     setStatus("Blocking this user...");
 
@@ -669,7 +686,28 @@ export default function Home() {
         </div>
 
         <div className="rounded-2xl border border-slate-700 bg-slate-900 p-3 sm:p-5">
-          <h3 className="mb-4 text-xl font-bold">💬 Live Chat</h3>
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+            <h3 className="text-xl font-bold">💬 Live Chat</h3>
+
+            {unreadMessages > 0 && (
+              <button
+                type="button"
+                onClick={() => {
+                  chatShouldScrollRef.current = true;
+
+                  const box = chatScrollRef.current;
+                  if (box) {
+                    box.scrollTop = box.scrollHeight;
+                  }
+
+                  setUnreadMessages(0);
+                }}
+                className="min-h-10 rounded-full bg-cyan-600 px-4 py-2 text-sm font-semibold text-white hover:bg-cyan-500"
+              >
+                ↓ {unreadMessages} new {unreadMessages === 1 ? "message" : "messages"}
+              </button>
+            )}
+          </div>
 
           <div
             ref={chatScrollRef}
@@ -677,6 +715,9 @@ export default function Home() {
               const box = event.currentTarget;
               chatShouldScrollRef.current =
                 box.scrollHeight - box.scrollTop - box.clientHeight < 100;
+              if (chatShouldScrollRef.current) {
+                setUnreadMessages(0);
+              }
             }} className="mb-4 h-64 space-y-3 overflow-y-auto rounded-xl bg-slate-950 p-3 sm:h-72 sm:p-4">
             {messages.length === 0 && (
               <p className="text-center text-sm text-slate-500">
