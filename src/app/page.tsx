@@ -9,6 +9,27 @@ type Message = {
   mine: boolean;
 };
 
+function getBrowserId(): string {
+  const storageKey = "talk-anyone-browser-id";
+
+  try {
+    const existing = window.localStorage.getItem(storageKey);
+
+    if (
+      existing &&
+      /^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(existing)
+    ) {
+      return existing;
+    }
+
+    const id = window.crypto.randomUUID();
+    window.localStorage.setItem(storageKey, id);
+    return id;
+  } catch {
+    return window.crypto.randomUUID();
+  }
+}
+
 export default function Home() {
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
@@ -126,7 +147,8 @@ export default function Home() {
       const socket = io(
         process.env.NODE_ENV === "development"
           ? "http://localhost:3001"
-          : "https://talk-anyone-5mlu.onrender.com"
+          : "https://talk-anyone-5mlu.onrender.com",
+        { auth: { browserId: getBrowserId() } }
       );
       socketRef.current = socket;
 
