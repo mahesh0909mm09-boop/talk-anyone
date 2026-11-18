@@ -690,7 +690,7 @@ export default function Home() {
               event.preventDefault();
               sendMessage();
             }}
-            className="flex gap-2"
+            className="flex flex-col gap-2 sm:flex-row"
           >
             <input
               value={messageInput}
@@ -701,13 +701,13 @@ export default function Home() {
                   ? "Type your message..."
                   : "Connect with someone to chat..."
               }
-              className="min-w-0 flex-1 rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-white outline-none focus:border-cyan-500 disabled:opacity-50"
+              className="w-full min-w-0 min-h-12 text-base sm:flex-1 min-w-0 flex-1 rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-white outline-none focus:border-cyan-500 disabled:opacity-50"
             />
 
             <button
               type="submit"
               disabled={!partnerConnected || !messageInput.trim()}
-              className="rounded-xl bg-cyan-600 px-6 py-3 font-bold hover:bg-cyan-500 disabled:opacity-40"
+              className="min-h-12 w-full touch-manipulation sm:w-auto rounded-xl bg-cyan-600 px-6 py-3 font-bold hover:bg-cyan-500 disabled:opacity-40"
             >
               Send
             </button>
