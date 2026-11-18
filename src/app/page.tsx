@@ -48,6 +48,7 @@ export default function Home() {
 
   // TALK_ANYONE_UNREAD_INDICATOR_V1
   const [unreadMessages, setUnreadMessages] = useState(0);
+  const [tabUnreadMessages, setTabUnreadMessages] = useState(0);
 
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
   const chatShouldScrollRef = useRef(true);
@@ -69,6 +70,40 @@ export default function Home() {
       box.scrollTop = box.scrollHeight;
     }
   }, [messages]);
+
+  // TALK_ANYONE_TAB_BADGE_V1
+  useEffect(() => {
+    const count = unreadMessages + tabUnreadMessages;
+
+    document.title =
+      count > 0
+        ? `(${count}) TALK ANYONE`
+        : "TALK ANYONE";
+
+    return () => {
+      document.title = "TALK ANYONE";
+    };
+  }, [unreadMessages, tabUnreadMessages]);
+
+  useEffect(() => {
+    const clearWhenVisible = () => {
+      if (!document.hidden) {
+        setTabUnreadMessages(0);
+      }
+    };
+
+    document.addEventListener(
+      "visibilitychange",
+      clearWhenVisible
+    );
+
+    return () => {
+      document.removeEventListener(
+        "visibilitychange",
+        clearWhenVisible
+      );
+    };
+  }, []);
 
   function closePeer() {
     if (peerRef.current) {
@@ -263,6 +298,10 @@ export default function Home() {
       });
 
       socket.on("chat-message", (message: string) => {
+        if (document.hidden && chatShouldScrollRef.current) {
+          setTabUnreadMessages((count) => count + 1);
+        }
+
         if (!chatShouldScrollRef.current) {
           setUnreadMessages((count) => count + 1);
         }
