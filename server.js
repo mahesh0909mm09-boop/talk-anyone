@@ -291,7 +291,72 @@ async function saveBrowserBlock(blockerId, blockedId) {
   return true;
 }
 
+// START METERED TURN - server-side only. Do not expose the API key.
+let cachedMeteredIceServers = null;
+let cachedMeteredIceServersUntil = 0;
+let meteredIceFetchInFlight = null;
+
+async function getMeteredIceServers() {
+  if (cachedMeteredIceServers && Date.now() < cachedMeteredIceServersUntil) {
+    return cachedMeteredIceServers;
+  }
+
+  if (meteredIceFetchInFlight) return meteredIceFetchInFlight;
+
+  meteredIceFetchInFlight = (async () => {
+    const apiKey = process.env.METERED_TURN_API_KEY;
+    const domain = process.env.METERED_DOMAIN || "talk-anyone.metered.live";
+    if (!apiKey || !/^[a-z0-9-]+\.metered\.live$/.test(domain)) {
+      throw new Error("Metered TURN environment configuration missing or invalid");
+    }
+
+    const endpoint = new URL(`https://${domain}/api/v1/turn/credentials`);
+    endpoint.searchParams.set("apiKey", apiKey);
+    const result = await fetch(endpoint, { signal: AbortSignal.timeout(6000) });
+    if (!result.ok) throw new Error(`Metered HTTP ${result.status}`);
+
+    const servers = await result.json();
+    if (!Array.isArray(servers)) throw new Error("Invalid Metered ICE server response");
+
+    const validated = servers.filter((server) => {
+      const urls = Array.isArray(server?.urls) ? server.urls : [server?.urls];
+      return urls.length > 0 && urls.every((url) =>
+        typeof url === "string" && /^(stun:|stuns:|turn:|turns:)/.test(url)
+      );
+    });
+    const hasTurn = validated.some((server) => {
+      const urls = Array.isArray(server.urls) ? server.urls : [server.urls];
+      return urls.some((url) => url.startsWith("turn:") || url.startsWith("turns:"));
+    });
+    if (!hasTurn) throw new Error("Metered returned no TURN servers");
+
+    cachedMeteredIceServers = validated;
+    cachedMeteredIceServersUntil = Date.now() + 5 * 60 * 1000;
+    return validated;
+  })();
+
+  try {
+    return await meteredIceFetchInFlight;
+  } finally {
+    meteredIceFetchInFlight = null;
+  }
+}
+// END METERED TURN
+
 io.on("connection", (socket) => {
+  // START METERED TURN: respond to the existing website socket.
+  socket.on("get-ice-servers", async (acknowledge) => {
+    if (typeof acknowledge !== "function") return;
+    try {
+      const iceServers = await getMeteredIceServers();
+      acknowledge({ iceServers });
+    } catch (error) {
+      console.error("TURN configuration unavailable:", error.message);
+      acknowledge({ iceServers: [] }); // browser keeps Google STUN fallback
+    }
+  });
+  // END METERED TURN
+
   const suppliedId = socket.handshake.auth?.browserId;
 
   socket.data.browserId =

@@ -123,12 +123,36 @@ export default function Home() {
   async function createPeer() {
     if (peerRef.current) return peerRef.current;
 
-    const peer = new RTCPeerConnection({
-      iceServers: [
-        { urls: "stun:stun.l.google.com:19302" },
-        { urls: "stun:stun1.l.google.com:19302" },
-      ],
-    });
+    // START METERED TURN - request ICE servers through our Socket.IO backend.
+    const fallbackIceServers: RTCIceServer[] = [
+      { urls: "stun:stun.l.google.com:19302" },
+      { urls: "stun:stun1.l.google.com:19302" },
+    ];
+    let iceServers: RTCIceServer[] = fallbackIceServers;
+    const currentSocket = socketRef.current;
+
+    if (currentSocket?.connected) {
+      const meteredServers = await new Promise<RTCIceServer[]>((resolve) => {
+        currentSocket.timeout(8000).emit(
+          "get-ice-servers",
+          (error: Error | null, response?: { iceServers?: RTCIceServer[] }) => {
+            if (error || !Array.isArray(response?.iceServers)) {
+              resolve([]);
+            } else {
+              resolve(response.iceServers);
+            }
+          }
+        );
+      });
+      if (meteredServers.length > 0) {
+        iceServers = [...meteredServers, ...fallbackIceServers];
+      }
+    }
+
+    // A second createPeer() call may have completed during the TURN lookup.
+    if (peerRef.current) return peerRef.current;
+    const peer = new RTCPeerConnection({ iceServers });
+    // END METERED TURN
 
     peerRef.current = peer;
 
