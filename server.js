@@ -347,6 +347,17 @@ io.on("connection", (socket) => {
   // START METERED TURN: respond to the existing website socket.
   socket.on("get-ice-servers", async (acknowledge) => {
     if (typeof acknowledge !== "function") return;
+
+    const now = Date.now();
+    const last = socket.data.lastTurnRequestAt || 0;
+
+    if (now - last < 3000) {
+      acknowledge({ iceServers: [] });
+      return;
+    }
+
+    socket.data.lastTurnRequestAt = now;
+
     try {
       const iceServers = await getMeteredIceServers();
       acknowledge({ iceServers });
