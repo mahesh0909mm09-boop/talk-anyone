@@ -673,11 +673,42 @@ export default function Home() {
                 <h2 className="text-lg font-bold">You're in control</h2>
                 <span className="text-xs text-[#748074]">Take it at your own pace</span>
               </div>
+              {/* TALK_ANYONE_SAFETY_GATE_V1: voluntary age declaration, not identity verification */}
+              <div className="mb-5 rounded-2xl border border-[#CDDDBF] bg-[#F2F7E9] p-4">
+                <label htmlFor="talk-anyone-adult-rules" className="flex cursor-pointer items-start gap-3">
+                  <input
+                    id="talk-anyone-adult-rules"
+                    type="checkbox"
+                    checked={acceptedRules}
+                    onChange={(event) => setAcceptedRules(event.target.checked)}
+                    className="mt-1 h-5 w-5 shrink-0 accent-[#567A4B]"
+                  />
+                  <span>
+                    <span className="block text-sm font-bold text-[#293B2A]">
+                      I confirm I am 18 or older and agree to follow the safety rules.
+                    </span>
+                    <span className="mt-1 block text-xs leading-5 text-[#586957]">
+                      Treat others with respect. No harassment, threats, or sexual content.
+                      Keep private information private. You can leave, block, or report.
+                    </span>
+                  </span>
+                </label>
+                <p className="mt-3 text-xs leading-5 text-[#61705E]">
+                  Please read our{" "}
+                  <a href="/community-guidelines" className="font-semibold underline underline-offset-2">
+                    Community Guidelines
+                  </a>{" "}
+                  and{" "}
+                  <a href="/terms" className="font-semibold underline underline-offset-2">
+                    Terms of Use
+                  </a>.
+                </p>
+              </div>
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-3">
                 <button
                   type="button"
                   onClick={startChat}
-                  disabled={!!socketRef.current?.connected || isSearching || partnerConnected}
+                  disabled={!acceptedRules || !!socketRef.current?.connected || isSearching || partnerConnected}
                   className="min-h-12 touch-manipulation rounded-xl bg-[#202824] px-4 py-3 text-sm font-bold text-white transition hover:bg-[#3E5142] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#527A4F] disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   ✳ Start chat
