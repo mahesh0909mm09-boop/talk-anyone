@@ -1,852 +1,431 @@
 
-"use client";
-
-import { useEffect, useRef, useState } from "react";
-import { io, Socket } from "socket.io-client";
-
-type Message = {
-  text: string;
-  mine: boolean;
-};
-
-function getBrowserId(): string {
-  const storageKey = "talk-anyone-browser-id";
-
-  try {
-    const existing = window.localStorage.getItem(storageKey);
-
-    if (
-      existing &&
-      /^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(existing)
-    ) {
-      return existing;
-    }
-
-    const id = window.crypto.randomUUID();
-    window.localStorage.setItem(storageKey, id);
-    return id;
-  } catch {
-    return window.crypto.randomUUID();
-  }
-}
-
-export default function Home() {
-  const localVideoRef = useRef<HTMLVideoElement>(null);
-  const remoteVideoRef = useRef<HTMLVideoElement>(null);
-  const localStreamRef = useRef<MediaStream | null>(null);
-  const peerRef = useRef<RTCPeerConnection | null>(null);
-  const socketRef = useRef<Socket | null>(null);
-  const pendingCandidatesRef = useRef<RTCIceCandidateInit[]>([]);
-
-  const [cameraOn, setCameraOn] = useState(true);
-  const [micOn, setMicOn] = useState(true);
-  const [acceptedRules, setAcceptedRules] = useState(false);
-  const [partnerConnected, setPartnerConnected] = useState(false);
-  const [isSearching, setIsSearching] = useState(false);
-  const [status, setStatus] = useState("Ready to meet someone?");
-  const [messages, setMessages] = useState<Message[]>([]);
-
-  // TALK_ANYONE_UNREAD_INDICATOR_V1
-  const [unreadMessages, setUnreadMessages] = useState(0);
-  const [tabUnreadMessages, setTabUnreadMessages] = useState(0);
-
-  const chatScrollRef = useRef<HTMLDivElement | null>(null);
-  const chatShouldScrollRef = useRef(true);
-
-  const [messageInput, setMessageInput] = useState("");
-
-  const chatSessionRef = useRef(0);
-  const messagePendingRef = useRef(false);
-
-  const [reportOpen, setReportOpen] = useState(false);
-  const [reportReason, setReportReason] = useState("harassment");
-  const [reportPending, setReportPending] = useState(false);
-
-  // TALK_ANYONE_CHAT_AUTOSCROLL_V1
-  useEffect(() => {
-    const box = chatScrollRef.current;
-
-    if (box && chatShouldScrollRef.current) {
-      box.scrollTop = box.scrollHeight;
-    }
-  }, [messages]);
-
-  // TALK_ANYONE_TAB_BADGE_V1
-  useEffect(() => {
-    const count = unreadMessages + tabUnreadMessages;
-
-    document.title =
-      count > 0
-        ? `(${count}) TALK ANYONE`
-        : "TALK ANYONE";
-
-    return () => {
-      document.title = "TALK ANYONE";
-    };
-  }, [unreadMessages, tabUnreadMessages]);
-
-  useEffect(() => {
-    const clearWhenVisible = () => {
-      if (!document.hidden) {
-        setTabUnreadMessages(0);
-      }
-    };
-
-    document.addEventListener(
-      "visibilitychange",
-      clearWhenVisible
-    );
-
-    return () => {
-      document.removeEventListener(
-        "visibilitychange",
-        clearWhenVisible
-      );
-    };
-  }, []);
-
-  function closePeer() {
-    if (peerRef.current) {
-      peerRef.current.ontrack = null;
-      peerRef.current.onicecandidate = null;
-      peerRef.current.close();
-      peerRef.current = null;
-    }
-
-    pendingCandidatesRef.current = [];
-
-    if (remoteVideoRef.current) {
-      remoteVideoRef.current.srcObject = null;
-    }
-  }
-
-  async function createPeer() {
-    if (peerRef.current) return peerRef.current;
-
-    // START METERED TURN - request ICE servers through our Socket.IO backend.
-    const fallbackIceServers: RTCIceServer[] = [
-      { urls: "stun:stun.l.google.com:19302" },
-      { urls: "stun:stun1.l.google.com:19302" },
-    ];
-    let iceServers: RTCIceServer[] = fallbackIceServers;
-    const currentSocket = socketRef.current;
-
-    if (currentSocket?.connected) {
-      const meteredServers = await new Promise<RTCIceServer[]>((resolve) => {
-        currentSocket.timeout(8000).emit(
-          "get-ice-servers",
-          (error: Error | null, response?: { iceServers?: RTCIceServer[] }) => {
-            if (error || !Array.isArray(response?.iceServers)) {
-              resolve([]);
-            } else {
-              resolve(response.iceServers);
-            }
-          }
-        );
-      });
-      if (meteredServers.length > 0) {
-        iceServers = [...meteredServers, ...fallbackIceServers];
-      }
-    }
-
-    // A second createPeer() call may have completed during the TURN lookup.
-    if (peerRef.current) return peerRef.current;
-    const peer = new RTCPeerConnection({ iceServers });
-    // END METERED TURN
-
-    peerRef.current = peer;
-
-    const localStream = localStreamRef.current;
-
-    if (localStream) {
-      localStream.getTracks().forEach((track) => {
-        peer.addTrack(track, localStream);
-      });
-    }
-
-    peer.ontrack = (event) => {
-      if (remoteVideoRef.current) {
-        remoteVideoRef.current.srcObject = event.streams[0];
-      }
-    };
-
-    peer.onicecandidate = (event) => {
-      if (event.candidate) {
-        socketRef.current?.emit("ice-candidate", event.candidate);
-      }
-    };
-
-    return peer;
-  }
-
-  async function addPendingCandidates() {
-    const peer = peerRef.current;
-
-    if (!peer || !peer.remoteDescription) return;
-
-    const candidates = [...pendingCandidatesRef.current];
-    pendingCandidatesRef.current = [];
-
-    for (const candidate of candidates) {
-      try {
-        await peer.addIceCandidate(new RTCIceCandidate(candidate));
-      } catch (error) {
-        console.error("ICE candidate error:", error);
-      }
-    }
-  }
-
-  async function startChat() {
-    if (!acceptedRules) {
-      alert("Please accept the safety rules first.");
-      return;
-    }
-
-    if (socketRef.current?.connected) {
-      return;
-    }
-
-    try {
-      setStatus("Turning on your camera...");
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: true,
-        audio: true,
-      });
-
-      localStreamRef.current = stream;
-
-      if (localVideoRef.current) {
-        localVideoRef.current.srcObject = stream;
-      }
-
-      setCameraOn(true);
-      setMicOn(true);
-
-      const socket = io(
-        process.env.NODE_ENV === "development"
-          ? "http://localhost:3001"
-          : "https://talk-anyone-5mlu.onrender.com",
-        { auth: { browserId: getBrowserId() } }
-      );
-      socketRef.current = socket;
-
-      socket.on("chat-error", (message: string) => {
-        setStatus(message);
-      });
-
-      socket.on("connect", () => {
-        setStatus("Finding someone...");
-        setIsSearching(true);
-        socket.emit("find-partner");
-      });
-
-      socket.on("waiting", () => {
-        closePeer();
-        setPartnerConnected(false);
-        setIsSearching(true);
-        setStatus("Waiting for someone to join...");
-      });
-
-      socket.on("partner-found", async ({ initiator }) => {
-        closePeer();
-        chatSessionRef.current += 1;
-        messagePendingRef.current = false;
-        chatShouldScrollRef.current = true;
-        setUnreadMessages(0);
-        setTabUnreadMessages(0);
-        setMessages([]);
-        setPartnerConnected(true);
-        setReportOpen(false);
-        setIsSearching(false);
-        setStatus("You are connected! Say hello.");
-
-        if (initiator) {
-          try {
-            const peer = await createPeer();
-            const offer = await peer.createOffer();
-            await peer.setLocalDescription(offer);
-            socket.emit("webrtc-offer", offer);
-          } catch (error) {
-            console.error("Offer error:", error);
-            setStatus("Could not start video. Please try Next.");
-          }
-        }
-      });
-
-      socket.on("webrtc-offer", async (offer) => {
-        try {
-          const peer = await createPeer();
-          await peer.setRemoteDescription(
-            new RTCSessionDescription(offer)
-          );
-
-          await addPendingCandidates();
-
-          const answer = await peer.createAnswer();
-          await peer.setLocalDescription(answer);
-          socket.emit("webrtc-answer", answer);
-        } catch (error) {
-          console.error("Answer error:", error);
-        }
-      });
-
-      socket.on("webrtc-answer", async (answer) => {
-        try {
-          const peer = peerRef.current;
-          if (!peer) return;
-
-          await peer.setRemoteDescription(
-            new RTCSessionDescription(answer)
-          );
-
-          await addPendingCandidates();
-        } catch (error) {
-          console.error("Remote answer error:", error);
-        }
-      });
-
-      socket.on("ice-candidate", async (candidate) => {
-        const peer = peerRef.current;
-
-        if (!peer || !peer.remoteDescription) {
-          pendingCandidatesRef.current.push(candidate);
-          return;
-        }
-
-        try {
-          await peer.addIceCandidate(
-            new RTCIceCandidate(candidate)
-          );
-        } catch (error) {
-          console.error("ICE candidate error:", error);
-        }
-      });
-
-      socket.on("chat-message", (message: string) => {
-        if (document.hidden && chatShouldScrollRef.current) {
-          setTabUnreadMessages((count) => count + 1);
-        }
-
-        if (!chatShouldScrollRef.current) {
-          setUnreadMessages((count) => count + 1);
-        }
-
-        setMessages((previous) => [
-          ...previous,
-          { text: message, mine: false },
-        ]);
-      });
-
-      // TALK_ANYONE_TAB_RESET_V1
-      socket.on("partner-left", () => {
-        setTabUnreadMessages(0);
-        chatShouldScrollRef.current = true;
-        setUnreadMessages(0);
-        chatSessionRef.current += 1;
-        messagePendingRef.current = false;
-        closePeer();
-        setPartnerConnected(false);
-        setIsSearching(false);
-        setStatus("Your partner left. Press Next to find someone else.");
-      });
-
-      socket.on("user-blocked", () => {
-        closePeer();
-        setPartnerConnected(false);
-        setIsSearching(false);
-        setStatus("This user has been blocked.");
-      });
-
-      socket.on("blocked-by-partner", () => {
-        closePeer();
-        setPartnerConnected(false);
-        setIsSearching(false);
-        setStatus("Your partner has disconnected.");
-      });
-
-      socket.on("match-error", (message: string) => {
-        setStatus(message);
-      });
-
-      socket.on("connect_error", (error) => {
-        console.error("Connection error:", error);
-        setStatus("Could not connect to the server. Check that it is running.");
-      });
-    } catch (error) {
-      console.error("Camera error:", error);
-      setStatus("Camera or microphone permission denied. Please allow access.");
-    }
-  }
-
-  function sendMessage() {
-    const text = messageInput.trim();
-    const socket = socketRef.current;
-
-    if (
-      !text ||
-      !partnerConnected ||
-      !socket?.connected ||
-      messagePendingRef.current
-    ) {
-      return;
-    }
-
-    messagePendingRef.current = true;
-    const session = chatSessionRef.current;
-
-    socket.timeout(5000).emit(
-      "chat-message",
-      text,
-      (
-        error: Error | null,
-        response?: { ok: boolean; message?: string }
-      ) => {
-        if (chatSessionRef.current !== session) {
-          return;
-        }
-
-        messagePendingRef.current = false;
-
-        if (error) {
-          setStatus(
-            "Message not confirmed. Check your connection."
-          );
-          return;
-        }
-
-        if (!response?.ok) {
-          setStatus(
-            response?.message || "Message was not sent."
-          );
-          return;
-        }
-
-        setMessages((previous) => [
-          ...previous,
-          { text, mine: true },
-        ]);
-
-        setMessageInput((current) =>
-          current.trim() === text ? "" : current
-        );
-      }
-    );
-  }
-
-  function nextPartner() {
-    if (!socketRef.current?.connected) {
-      setStatus("Press Start to begin chatting.");
-      return;
-    }
-
-    closePeer();
-    chatSessionRef.current += 1;
-    messagePendingRef.current = false;
-    chatShouldScrollRef.current = true;
-    setUnreadMessages(0);
-    setTabUnreadMessages(0);
-    setMessages([]);
-    setPartnerConnected(false);
-    setIsSearching(true);
-    setStatus("Finding your next partner...");
-
-    socketRef.current.emit("next-partner");
-  }
-
-  function stopChat() {
-    closePeer();
-
-    socketRef.current?.disconnect();
-    socketRef.current = null;
-
-    localStreamRef.current?.getTracks().forEach((track) => {
-      track.stop();
-    });
-
-    localStreamRef.current = null;
-
-    if (localVideoRef.current) {
-      localVideoRef.current.srcObject = null;
-    }
-
-    setPartnerConnected(false);
-    setIsSearching(false);
-    setCameraOn(false);
-    setMicOn(false);
-    chatSessionRef.current += 1;
-    messagePendingRef.current = false;
-    chatShouldScrollRef.current = true;
-    setUnreadMessages(0);
-    setTabUnreadMessages(0);
-    setMessages([]);
-    setMessageInput("");
-    setStatus("Chat stopped. Press Start when you're ready.");
-  }
-
-  function toggleCamera() {
-    const stream = localStreamRef.current;
-    if (!stream) return;
-
-    const newState = !cameraOn;
-
-    stream.getVideoTracks().forEach((track) => {
-      track.enabled = newState;
-    });
-
-    setCameraOn(newState);
-  }
-
-  function toggleMic() {
-    const stream = localStreamRef.current;
-    if (!stream) return;
-
-    const newState = !micOn;
-
-    stream.getAudioTracks().forEach((track) => {
-      track.enabled = newState;
-    });
-
-    setMicOn(newState);
-  }
-
-  function submitReport() {
-    const socket = socketRef.current;
-    if (!socket?.connected || !partnerConnected || reportPending) return;
-
-    setReportPending(true);
-    socket.timeout(10000).emit(
-      "report-user",
-      { reason: reportReason },
-      (error: Error | null, reply?: { ok: boolean; message: string }) => {
-        setReportPending(false);
-        if (error || !reply?.ok) {
-          setStatus(reply?.message || "Report could not be sent. Try again.");
-          return;
-        }
-        setReportOpen(false);
-        setStatus("Report received. Thank you for helping keep TALK ANYONE safe.");
-      }
-    );
-  }
-
-  function blockUser() {
-    if (!partnerConnected) return;
-
-    const confirmed = window.confirm(
-      "Are you sure you want to block this person?"
-    );
-
-    if (!confirmed) return;
-
-    closePeer();
-    setPartnerConnected(false);
-    chatSessionRef.current += 1;
-    messagePendingRef.current = false;
-    chatShouldScrollRef.current = true;
-    setUnreadMessages(0);
-    setTabUnreadMessages(0);
-    setMessages([]);
-    setStatus("Blocking this user...");
-
-    socketRef.current?.emit("block-user");
-  }
-
-  useEffect(() => {
-    return () => {
-      socketRef.current?.disconnect();
-
-      localStreamRef.current?.getTracks().forEach((track) => {
-        track.stop();
-      });
-
-      peerRef.current?.close();
-    };
-  }, []);
-
+import Link from "next/link";
+
+const features = [
+  {
+    symbol: "🎥",
+    title: "See who you're talking to",
+    description:
+      "Have face-to-face conversations through random video chat.",
+  },
+  {
+    symbol: "💬",
+    title: "Words work too",
+    description:
+      "Not in the mood for video? Get to know someone through text.",
+  },
+  {
+    symbol: "🔀",
+    title: "A new hello, anytime",
+    description:
+      "Move to another conversation whenever you're ready.",
+  },
+];
+
+const steps = [
+  {
+    number: "01",
+    title: "Say hello",
+    description:
+      "Open stranger chat and agree to the community guidelines.",
+  },
+  {
+    number: "02",
+    title: "Start talking",
+    description:
+      "Get matched with another person and see where the conversation goes.",
+  },
+  {
+    number: "03",
+    title: "Keep exploring",
+    description:
+      "Enjoy the conversation or move on to meet someone new.",
+  },
+];
+
+export default function HomePage() {
   return (
-    <main className="min-h-screen bg-slate-950 text-white">
-      <header className="border-b border-slate-800 px-3 py-4 sm:px-6 sm:py-5">
-        <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-2">
-          <h1 className="text-xl font-extrabold tracking-wide text-cyan-400 sm:text-3xl">
-            TALK ANYONE
-          </h1>
-          <span className="rounded-full bg-slate-800 px-3 py-2 text-xs text-cyan-300 sm:px-4 sm:text-sm">
-            Random Video Chat
-          </span>
-        </div>
+    <main className="min-h-screen bg-[#F7F5EE] text-[#202824]">
+      {/* NAVIGATION */}
+      <header className="border-b border-[#202824]/10">
+        <nav className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-5 py-5 sm:px-8">
+          <Link
+            href="/"
+            className="flex items-center gap-2 text-xl font-extrabold tracking-tight"
+          >
+            <span className="flex h-10 w-10 items-center justify-center rounded-full bg-[#202824] text-xl text-[#D8F38D]">
+              ✳
+            </span>
+            talk anyone<span className="text-[#71915C]">.</span>
+          </Link>
+
+          <div className="hidden items-center gap-8 text-sm font-medium md:flex">
+            <a href="#how-it-works" className="hover:text-[#71915C]">
+              How it works
+            </a>
+            <a href="#features" className="hover:text-[#71915C]">
+              Features
+            </a>
+            <a href="#safety" className="hover:text-[#71915C]">
+              Our community
+            </a>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <Link
+              href="/login"
+              className="hidden text-sm font-semibold hover:text-[#71915C] sm:block"
+            >
+              Log in
+            </Link>
+
+            <Link
+              href="/chat"
+              className="rounded-full bg-[#202824] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#3D5144]"
+            >
+              Start chatting
+            </Link>
+          </div>
+        </nav>
       </header>
 
-      <section className="mx-auto max-w-6xl px-3 py-5 sm:px-4 sm:py-8">
-        <div className="mb-6 text-center">
-          <h2 className="text-2xl font-bold sm:text-3xl">
-            Meet New People Worldwide
+      {/* HERO */}
+      <section className="relative overflow-hidden">
+        <div className="mx-auto grid max-w-7xl items-center gap-14 px-5 py-20 sm:px-8 lg:grid-cols-2 lg:gap-20 lg:py-28">
+          <div>
+            <div className="mb-7 inline-flex items-center gap-2 rounded-full bg-[#E5EDD3] px-4 py-2 text-xs font-semibold text-[#486541] sm:text-sm">
+              <span>✳</span>
+              A little less scrolling. A little more talking.
+            </div>
+
+            <h1 className="max-w-xl text-5xl font-extrabold leading-[1.08] tracking-tight sm:text-6xl lg:text-7xl">
+              Everyone has a story.
+              <span className="mt-2 block text-[#718F5A]">
+                Go hear one.
+              </span>
+            </h1>
+
+            <p className="mt-7 max-w-lg text-lg leading-8 text-[#626A62]">
+              A simple place to meet someone new, share a laugh,
+              ask a question, or just talk about life.
+              Sometimes a little hello goes a long way.
+            </p>
+
+            <div className="mt-9 flex flex-wrap items-center gap-4">
+              <Link
+                href="/chat"
+                className="rounded-full bg-[#202824] px-8 py-4 text-base font-bold text-white shadow-lg shadow-[#202824]/10 transition hover:-translate-y-0.5 hover:bg-[#3D5144]"
+              >
+                Start a conversation ↗
+              </Link>
+
+              <a
+                href="#how-it-works"
+                className="rounded-full border border-[#202824]/20 px-7 py-4 text-base font-semibold transition hover:bg-[#EBEADC]"
+              >
+                How it works
+              </a>
+            </div>
+
+            <p className="mt-6 flex items-center gap-2 text-sm text-[#727970]">
+              <span className="text-[#638751]">✓</span>
+              No account needed for stranger chat
+            </p>
+          </div>
+
+          {/* EXAMPLE CONVERSATION */}
+          <div className="relative mx-auto w-full max-w-lg">
+            <div
+              aria-hidden="true"
+              className="absolute -right-8 -top-8 h-40 w-40 rounded-full bg-[#DCE9C4]"
+            />
+            <div
+              aria-hidden="true"
+              className="absolute -bottom-8 -left-8 h-44 w-44 rounded-full bg-[#F0DCC2]"
+            />
+
+            <div className="relative rounded-[32px] border border-[#E1DED2] bg-white p-5 shadow-2xl shadow-[#202824]/10 sm:p-8">
+              <div className="mb-7 flex items-center justify-between border-b border-[#F0EEE7] pb-5">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#E7EFD8] text-xl">
+                    💬
+                  </div>
+
+                  <div>
+                    <h2 className="text-base font-bold">
+                      The art of saying hello
+                    </h2>
+                    <p className="text-xs text-[#80877C]">
+                      Example conversation
+                    </p>
+                  </div>
+                </div>
+
+                <span className="rounded-full bg-[#F2F5EC] px-3 py-1 text-xs text-[#668456]">
+                  A little moment
+                </span>
+              </div>
+
+              <div className="space-y-5">
+                <div className="flex items-end gap-3">
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#F2DABB] text-sm">
+                    🙂
+                  </div>
+
+                  <div className="max-w-[82%] rounded-2xl rounded-bl-sm bg-[#F2F0E9] px-4 py-4 text-sm leading-6">
+                    Hey! What&apos;s one good thing that happened
+                    to you today?
+                  </div>
+                </div>
+
+                <div className="flex items-end justify-end gap-3">
+                  <div className="max-w-[82%] rounded-2xl rounded-br-sm bg-[#D9EFAB] px-4 py-4 text-sm leading-6">
+                    I finally finished something I&apos;ve been
+                    working on for weeks 😄
+                  </div>
+
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#D9EFAB] text-sm">
+                    😎
+                  </div>
+                </div>
+
+                <div className="flex items-end gap-3">
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#F2DABB] text-sm">
+                    🙂
+                  </div>
+
+                  <div className="max-w-[82%] rounded-2xl rounded-bl-sm bg-[#F2F0E9] px-4 py-4 text-sm leading-6">
+                    That&apos;s awesome! Tell me about it.
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-7 flex items-center justify-between rounded-2xl border border-[#E8E8E0] bg-[#FAFAF7] px-4 py-4">
+                <span className="text-sm text-[#A1A69C]">
+                  Every conversation starts somewhere...
+                </span>
+                <span className="text-[#718F5A]">✳</span>
+              </div>
+            </div>
+
+            <div className="relative -mt-3 ml-5 inline-flex -rotate-3 items-center gap-2 rounded-xl bg-[#202824] px-5 py-3 text-sm font-semibold text-white shadow-lg">
+              ✨ A stranger could make your day.
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* VALUES STRIP */}
+      <section className="border-y border-[#202824]/10 bg-[#EFEDE4]">
+        <div className="mx-auto flex max-w-7xl flex-wrap justify-center gap-x-12 gap-y-4 px-5 py-6 text-sm font-semibold text-[#626B60]">
+          <span>✳ Real conversations</span>
+          <span>✳ New perspectives</span>
+          <span>✳ Your choice to connect</span>
+          <span>✳ Respect comes first</span>
+        </div>
+      </section>
+
+      {/* FEATURES */}
+      <section
+        id="features"
+        className="mx-auto max-w-7xl px-5 py-24 sm:px-8"
+      >
+        <div className="max-w-2xl">
+          <p className="mb-4 text-sm font-bold uppercase tracking-[0.2em] text-[#718F5A]">
+            Made for conversations
+          </p>
+
+          <h2 className="text-4xl font-extrabold tracking-tight sm:text-5xl">
+            Less complicated.
+            <br />
+            More connection.
           </h2>
-          <p className="mt-2 text-slate-400">
-            Talk with strangers, make friends, and have fun.
+
+          <p className="mt-5 text-lg leading-8 text-[#697066]">
+            No endless feeds. Just an easy way to start talking
+            to someone you haven&apos;t met yet.
           </p>
         </div>
 
-        <div className="mb-6 rounded-xl border border-slate-700 bg-slate-900 p-4 text-center">
-          <p className="text-cyan-300">{status}</p>
-          {isSearching && (
-            <p className="mt-2 text-sm text-slate-400">
-              Please wait while we find someone...
-            </p>
-          )}
-        </div>
-
-        <div className="relative grid grid-cols-1 gap-3 sm:gap-5 md:grid-cols-2">
-          <div className="absolute bottom-3 right-3 z-10 w-[38%] max-w-44 overflow-hidden rounded-2xl border-2 border-cyan-400 bg-slate-900 shadow-xl md:static md:w-auto md:max-w-none md:border-slate-700 md:shadow-none">
-            <div className="flex items-center justify-between px-4 py-3">
-              <h3 className="font-semibold">Your Camera</h3>
-              <span className="text-sm text-green-400">You</span>
-            </div>
-
-            <div className="relative aspect-video bg-black">
-              <video
-                ref={localVideoRef}
-                autoPlay
-                muted
-                playsInline
-                className="h-full w-full object-cover"
-                style={{ transform: "scaleX(-1)" }}
-              />
-
-              {!cameraOn && (
-                <div className="absolute inset-0 flex items-center justify-center bg-slate-900 text-slate-400">
-                  Camera is off
-                </div>
-              )}
-            </div>
-          </div>
-
-          <div className="overflow-hidden rounded-2xl border border-slate-700 bg-slate-900">
-            <div className="flex items-center justify-between px-4 py-3">
-              <h3 className="font-semibold">Stranger</h3>
-              <span className="text-sm text-cyan-400">
-                {partnerConnected ? "Connected" : "Not connected"}
-              </span>
-            </div>
-
-            <div className="relative flex aspect-[3/4] items-center justify-center bg-black md:aspect-video">
-              <video
-                ref={remoteVideoRef}
-                autoPlay
-                playsInline
-                className="h-full w-full object-cover"
-              />
-
-              {!partnerConnected && (
-                <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-400">
-                  <span className="text-5xl">👤</span>
-                  <p className="mt-3">Waiting for a stranger</p>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-
-        <div className="my-5 grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:justify-center sm:gap-3">
-          <button
-            onClick={toggleCamera}
-            disabled={!localStreamRef.current}
-            className="min-h-12 touch-manipulation rounded-xl bg-slate-700 px-5 py-3 font-semibold transition hover:bg-slate-600 disabled:opacity-40"
-          >
-            {cameraOn ? "📷 Camera On" : "📷 Camera Off"}
-          </button>
-
-          <button
-            onClick={toggleMic}
-            disabled={!localStreamRef.current}
-            className="min-h-12 touch-manipulation rounded-xl bg-slate-700 px-5 py-3 font-semibold transition hover:bg-slate-600 disabled:opacity-40"
-          >
-            {micOn ? "🎤 Mic On" : "🔇 Mic Off"}
-          </button>
-
-          <button
-            onClick={startChat}
-            disabled={!!socketRef.current?.connected || isSearching || partnerConnected}
-            className="min-h-12 touch-manipulation rounded-xl bg-green-600 px-7 py-3 font-bold transition hover:bg-green-500 disabled:opacity-40"
-          >
-            Start Chat
-          </button>
-
-          <button
-            onClick={nextPartner}
-            disabled={!socketRef.current?.connected}
-            className="min-h-12 touch-manipulation rounded-xl bg-cyan-600 px-7 py-3 font-bold transition hover:bg-cyan-500 disabled:opacity-40"
-          >
-            Next ➜
-          </button>
-
-          <button
-            onClick={blockUser}
-            disabled={!partnerConnected}
-            className="min-h-12 touch-manipulation rounded-xl bg-orange-600 px-6 py-3 font-bold transition hover:bg-orange-500 disabled:opacity-40"
-          >
-            🚫 Block
-          </button>
-          <button
-            onClick={() => setReportOpen(true)}
-            disabled={!partnerConnected}
-            className="min-h-12 touch-manipulation rounded-xl bg-amber-600 px-6 py-3 font-bold transition hover:bg-amber-500 disabled:opacity-40"
-          >
-            🚩 Report
-          </button>
-
-          <button
-            onClick={stopChat}
-            className="min-h-12 touch-manipulation rounded-xl bg-red-600 px-7 py-3 font-bold transition hover:bg-red-500"
-          >
-            Stop
-          </button>
-        </div>
-        {reportOpen && partnerConnected && (
-          <div className="mb-6 rounded-xl border border-amber-600 bg-slate-900 p-5">
-            <h3 className="mb-3 text-lg font-bold">🚩 Report this person</h3>
-            <p className="mb-3 text-sm text-slate-400">
-              Choose a reason. Reporting does not automatically block someone.
-            </p>
-            <label htmlFor="report-reason" className="mb-2 block text-sm">Reason</label>
-            <select
-              id="report-reason"
-              value={reportReason}
-              onChange={(event) => setReportReason(event.target.value)}
-              className="w-full rounded-lg border border-slate-600 bg-slate-950 p-3"
+        <div className="mt-12 grid gap-5 md:grid-cols-3">
+          {features.map((feature, index) => (
+            <div
+              key={feature.title}
+              className={`rounded-[28px] border border-[#E4E2D7] p-8 ${
+                index === 1 ? "bg-[#E7EDD9]" : "bg-white"
+              }`}
             >
-              <option value="harassment">Harassment or bullying</option>
-              <option value="inappropriate-content">Inappropriate content</option>
-              <option value="spam">Spam or advertising</option>
-              <option value="hate-speech">Hate speech or threats</option>
-              <option value="other">Other</option>
-            </select>
-            <div className="mt-4 flex flex-wrap gap-3">
-              <button
-                onClick={submitReport}
-                disabled={reportPending}
-                className="rounded-lg bg-amber-600 px-5 py-3 font-bold disabled:opacity-40"
-              >
-                {reportPending ? "Sending..." : "Submit Report"}
-              </button>
-              <button
-                onClick={() => setReportOpen(false)}
-                disabled={reportPending}
-                className="rounded-lg bg-slate-700 px-5 py-3 font-bold disabled:opacity-40"
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        )}
+              <div className="mb-10 flex h-14 w-14 items-center justify-center rounded-2xl bg-[#F4F2EA] text-3xl">
+                {feature.symbol}
+              </div>
 
-        <div className="mb-6 rounded-xl border border-slate-700 bg-slate-900 p-4">
-          <label className="flex cursor-pointer items-start gap-3">
-            <input
-              type="checkbox"
-              checked={acceptedRules}
-              onChange={(event) => setAcceptedRules(event.target.checked)}
-              className="mt-1 h-4 w-4"
-            />
-            <span className="text-sm text-slate-300">
-              I agree to use TALK ANYONE respectfully. I will not
-              share harmful, abusive, or inappropriate content.
-            </span>
-          </label>
-        </div>
+              <h3 className="text-2xl font-bold tracking-tight">
+                {feature.title}
+              </h3>
 
-        <div className="rounded-2xl border border-slate-700 bg-slate-900 p-3 sm:p-5">
-          <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-            <h3 className="text-xl font-bold">💬 Live Chat</h3>
-
-            {unreadMessages > 0 && (
-              <button
-                type="button"
-                onClick={() => {
-                  chatShouldScrollRef.current = true;
-
-                  const box = chatScrollRef.current;
-                  if (box) {
-                    box.scrollTop = box.scrollHeight;
-                  }
-
-                  setUnreadMessages(0);
-                }}
-                className="min-h-10 rounded-full bg-cyan-600 px-4 py-2 text-sm font-semibold text-white hover:bg-cyan-500"
-              >
-                ↓ {unreadMessages} new {unreadMessages === 1 ? "message" : "messages"}
-              </button>
-            )}
-          </div>
-
-          <div
-            ref={chatScrollRef}
-            onScroll={(event) => {
-              const box = event.currentTarget;
-              chatShouldScrollRef.current =
-                box.scrollHeight - box.scrollTop - box.clientHeight < 100;
-              if (chatShouldScrollRef.current) {
-                setUnreadMessages(0);
-              }
-            }} className="mb-4 h-64 space-y-3 overflow-y-auto rounded-xl bg-slate-950 p-3 sm:h-72 sm:p-4">
-            {messages.length === 0 && (
-              <p className="text-center text-sm text-slate-500">
-                Your messages will appear here.
+              <p className="mt-4 leading-7 text-[#677064]">
+                {feature.description}
               </p>
-            )}
+            </div>
+          ))}
+        </div>
+      </section>
 
-            {messages.map((message, index) => (
+      {/* HOW IT WORKS */}
+      <section
+        id="how-it-works"
+        className="bg-[#202824] px-5 py-24 text-white sm:px-8"
+      >
+        <div className="mx-auto max-w-7xl">
+          <div className="max-w-2xl">
+            <p className="mb-4 text-sm font-bold uppercase tracking-[0.2em] text-[#D9EFAB]">
+              The simple part
+            </p>
+
+            <h2 className="text-4xl font-extrabold tracking-tight sm:text-5xl">
+              Three steps.
+              <br />
+              A world of conversations.
+            </h2>
+          </div>
+
+          <div className="mt-14 grid gap-6 md:grid-cols-3">
+            {steps.map((step) => (
               <div
-                key={index}
-                className={`flex ${
-                  message.mine ? "justify-end" : "justify-start"
-                }`}
+                key={step.number}
+                className="rounded-[28px] border border-white/15 bg-white/5 p-8"
               >
-                <div
-                  className={`max-w-[80%] rounded-xl px-4 py-2 ${
-                    message.mine
-                      ? "bg-cyan-700"
-                      : "bg-slate-700"
-                  }`}
-                >
-                  {message.text}
-                </div>
+                <p className="text-5xl font-extrabold text-[#D9EFAB]">
+                  {step.number}
+                </p>
+
+                <h3 className="mt-8 text-2xl font-bold">
+                  {step.title}
+                </h3>
+
+                <p className="mt-4 leading-7 text-[#C0C9C0]">
+                  {step.description}
+                </p>
               </div>
             ))}
           </div>
-
-          <form
-            onSubmit={(event) => {
-              event.preventDefault();
-              sendMessage();
-            }}
-            className="flex flex-col gap-2 sm:flex-row"
-          >
-            <input
-              value={messageInput}
-              onChange={(event) => setMessageInput(event.target.value)}
-              disabled={!partnerConnected}
-              placeholder={
-                partnerConnected
-                  ? "Type your message..."
-                  : "Connect with someone to chat..."
-              }
-              className="w-full min-w-0 min-h-12 text-base sm:flex-1 min-w-0 flex-1 rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-white outline-none focus:border-cyan-500 disabled:opacity-50"
-            />
-
-            <button
-              type="submit"
-              disabled={!partnerConnected || !messageInput.trim()}
-              className="min-h-12 w-full touch-manipulation sm:w-auto rounded-xl bg-cyan-600 px-6 py-3 font-bold hover:bg-cyan-500 disabled:opacity-40"
-            >
-              Send
-            </button>
-          </form>
-        </div>
-
-        <div className="mt-8 text-center text-sm text-slate-500">
-          Be respectful. Never share personal information with strangers.
         </div>
       </section>
+
+      {/* SAFETY */}
+      <section
+        id="safety"
+        className="mx-auto grid max-w-7xl items-center gap-10 px-5 py-24 sm:px-8 lg:grid-cols-2"
+      >
+        <div>
+          <span className="mb-5 inline-block rounded-2xl bg-[#E7EDD9] p-5 text-4xl">
+            🤝
+          </span>
+
+          <h2 className="max-w-lg text-4xl font-extrabold tracking-tight sm:text-5xl">
+            Good conversations start with respect.
+          </h2>
+
+          <p className="mt-6 max-w-lg text-lg leading-8 text-[#697066]">
+            Remember there&apos;s a real person on the other
+            side of the screen. Be kind, respect boundaries,
+            and don&apos;t share sensitive personal information.
+          </p>
+        </div>
+
+        <div className="space-y-4">
+          {[
+            {
+              title: "Be yourself. Be respectful.",
+              description:
+                "Treat people the way you'd want to be treated.",
+            },
+            {
+              title: "Your privacy matters.",
+              description:
+                "Avoid sharing your address, passwords, phone number, or other private details.",
+            },
+            {
+              title: "You're in control.",
+              description:
+                "Use Next Stranger, Block, or Report if a conversation makes you uncomfortable.",
+            },
+          ].map((item) => (
+            <div
+              key={item.title}
+              className="flex gap-4 rounded-2xl border border-[#E2E2D9] bg-white p-6"
+            >
+              <span className="text-xl text-[#718F5A]">✓</span>
+
+              <div>
+                <h3 className="font-bold">{item.title}</h3>
+                <p className="mt-2 leading-6 text-[#737B70]">
+                  {item.description}
+                </p>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* FINAL CTA */}
+      <section className="px-5 pb-20 sm:px-8">
+        <div className="mx-auto max-w-7xl overflow-hidden rounded-[36px] bg-[#DCEBBF] px-6 py-16 text-center sm:px-12">
+          <div className="mb-5 text-4xl">✳</div>
+
+          <h2 className="mx-auto max-w-2xl text-4xl font-extrabold tracking-tight sm:text-5xl">
+            Somebody out there has a story worth hearing.
+          </h2>
+
+          <p className="mx-auto mt-5 max-w-lg text-lg text-[#596952]">
+            Ready when you are. Your next conversation starts
+            with a hello.
+          </p>
+
+          <Link
+            href="/chat"
+            className="mt-9 inline-block rounded-full bg-[#202824] px-9 py-4 font-bold text-white transition hover:bg-[#3D5144]"
+          >
+            Let&apos;s talk ↗
+          </Link>
+        </div>
+      </section>
+
+      {/* FOOTER */}
+      <footer className="border-t border-[#202824]/10 px-5 py-8 sm:px-8">
+        <div className="mx-auto flex max-w-7xl flex-col items-center justify-between gap-5 text-center sm:flex-row">
+          <div>
+            <p className="font-extrabold">talk anyone.</p>
+            <p className="mt-1 text-xs text-[#747D71]">
+              A place for new conversations.
+            </p>
+          </div>
+
+          <div className="flex flex-wrap justify-center gap-6 text-sm font-medium">
+            <Link href="/" className="hover:text-[#718F5A]">
+              Home
+            </Link>
+            <Link href="/chat" className="hover:text-[#718F5A]">
+              Chat
+            </Link>
+            <Link href="/login" className="hover:text-[#718F5A]">
+              Log in
+            </Link>
+          </div>
+
+          <p className="text-xs text-[#747D71]">
+            © 2026 TALK ANYONE
+          </p>
+        </div>
+                <nav aria-label="Site information" className="mt-5 flex flex-wrap justify-center gap-x-5 gap-y-2 text-sm text-[#647164]">
+            <a href="/about" className="hover:underline">About</a>
+            <a href="/privacy" className="hover:underline">Privacy</a>
+            <a href="/terms" className="hover:underline">Terms</a>
+            <a href="/community-guidelines" className="hover:underline">Community guidelines</a>
+            <a href="/contact" className="hover:underline">Contact</a>
+          </nav>
+</footer>
     </main>
   );
 }
+
