@@ -3,4 +3,19 @@
   <url>
     <loc>https://talk-anyone.vercel.app/</loc>
   </url>
+  <url>
+    <loc>https://talk-anyone.vercel.app/about</loc>
+  </url>
+  <url>
+    <loc>https://talk-anyone.vercel.app/privacy</loc>
+  </url>
+  <url>
+    <loc>https://talk-anyone.vercel.app/terms</loc>
+  </url>
+  <url>
+    <loc>https://talk-anyone.vercel.app/community-guidelines</loc>
+  </url>
+  <url>
+    <loc>https://talk-anyone.vercel.app/contact</loc>
+  </url>
 </urlset>

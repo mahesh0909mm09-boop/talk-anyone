@@ -22,10 +22,6 @@ export const metadata: Metadata = {
 
   applicationName: "TALK ANYONE",
 
-  alternates: {
-    canonical: "/",
-  },
-
   robots: {
     index: true,
     follow: true,
