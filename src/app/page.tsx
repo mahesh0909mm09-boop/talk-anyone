@@ -43,6 +43,10 @@ const steps = [
   },
 ];
 
+export const metadata = {
+  other: { "google-adsense-account": "ca-pub-4915271289803139" },
+};
+
 export default function HomePage() {
   return (
     <main className="min-h-screen bg-[#F7F5EE] text-[#202824]">
